@@ -1,4 +1,6 @@
-use headless_pi_player::flash_drive_observer::FlashDriveObserver;
+use std::sync::Arc;
+
+use headless_pi_player::{file_manager::FilesManager, flash_drive_observer::FileSourceFlashDrive, FilesSource, FilesSourceHandler};
 
 fn init_tracing() {
     let _ = tracing_subscriber::fmt()
@@ -10,7 +12,14 @@ fn init_tracing() {
 async fn main() {
     init_tracing();
 
-    let flash_drive_observer = FlashDriveObserver::new().await.expect("Flash Drive Observer should work");
+    let files_manager = FilesManager::new().await.expect("Could not create files manager");
+    let media_user_path = files_manager.get_media_user_path();
+    
+    // files_manager is shared among Files Sources
+    let files_manager = Arc::new(files_manager);
 
-    flash_drive_observer.await_finish().await.unwrap();
+    let source_flash_drive = FileSourceFlashDrive::new(media_user_path).await
+        .start(files_manager.clone()).await.expect("msg");
+
+    source_flash_drive.await_finish().await.unwrap();
 }
