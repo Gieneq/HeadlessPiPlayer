@@ -14,6 +14,17 @@ async fn main() {
 
     let files_manager = FilesManager::new().await.expect("Could not create files manager");
     let media_user_path = files_manager.get_media_user_path();
+
+    // Spawn shutdown signal
+    let shutdown_notify = Arc::new(tokio::sync::Notify::new());
+    let notify_clone = shutdown_notify.clone();
+
+    // Set up Ctrl+C handler
+    ctrlc::set_handler(move || {
+        tracing::info!("Ctrl+C received, shutting down...");
+        notify_clone.notify_one();
+    })
+    .expect("Error setting Ctrl+C handler");
     
     // files_manager is shared among Files Sources
     let files_manager = Arc::new(files_manager);
@@ -21,5 +32,10 @@ async fn main() {
     let source_flash_drive = FileSourceFlashDrive::new(media_user_path).await
         .start(files_manager.clone()).await.expect("msg");
 
-    source_flash_drive.await_finish().await.unwrap();
+    // Wait for Ctrl+C
+    shutdown_notify.notified().await;
+
+    // Gracefully shut down
+    source_flash_drive.shutdown().await.expect("Failed to shut down FLASH drive source");
+    tracing::info!("Shutdown complete.");
 }
