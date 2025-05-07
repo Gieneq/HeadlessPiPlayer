@@ -57,6 +57,9 @@ impl FilesSource for FileSourceFlashDrive {
         let files_manager_sink = sink.get_tx();
 
         let watcher_task = tokio::task::spawn_blocking(move || {
+            // Allows opening already inserted FLASH drive
+            let mut flash_drive_was_created: bool = false;
+
             // Dropping watcher from outside should break for loop
             for res in watcher_rx {
                 match res {
@@ -65,6 +68,7 @@ impl FilesSource for FileSourceFlashDrive {
                         let process_event_result = match event.kind {
                             notify::EventKind::Create(_) => {
                                 tracing::debug!("FLASH drive inserted.");
+                                flash_drive_was_created = true;
                                 files_manager_sink.blocking_send(FilesSourceType::FlashDrive)
                             },
                             notify::EventKind::Remove(_) => {
@@ -73,7 +77,13 @@ impl FilesSource for FileSourceFlashDrive {
                             },
                             notify::EventKind::Access(AccessKind::Open(_)) => {
                                 tracing::debug!("FLASH drive access in open mode.");
-                                files_manager_sink.blocking_send(FilesSourceType::FlashDrive)
+                                // Edge case - FLASH drive inserted before starting program
+                                if !flash_drive_was_created {
+                                    flash_drive_was_created = true;
+                                    files_manager_sink.blocking_send(FilesSourceType::FlashDrive)
+                                } else {
+                                    Ok(())
+                                }
                             },
                             _=> Ok(())
                         };
