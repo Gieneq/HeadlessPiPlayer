@@ -1,7 +1,8 @@
-use std::sync::Arc;
+use std::{path::Path, sync::Arc};
 
 pub mod flash_drive_observer;
 pub mod file_manager;
+pub mod video_player;
 
 #[derive(Debug)]
 pub enum FilesSourceType {
@@ -25,4 +26,17 @@ pub trait FilesSourceHandler: Send {
     fn shutdown(self) -> impl std::future::Future<Output = Result<(), Self::Error>> + Send;
 
     fn await_finish(self) -> impl std::future::Future<Output = Result<(), Self::Error>> + Send;
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum FileSubscriberError {
+
+}
+
+pub trait FileSubscriber: Send + Sync {
+    /// Called before a file is deleted. Subscriber must release it.
+    fn on_file_about_to_be_deleted(&self) -> impl std::future::Future<Output = Result<(), FileSubscriberError>> + Send;
+
+    /// Called when a new file is ready.
+    fn on_new_file_available(&self, file_path: &Path) -> impl std::future::Future<Output = Result<(), FileSubscriberError>> + Send;
 }

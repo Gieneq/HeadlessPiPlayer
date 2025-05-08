@@ -68,6 +68,7 @@ impl FilesSource for FileSourceFlashDrive {
                         let process_event_result = match event.kind {
                             notify::EventKind::Create(_) => {
                                 tracing::debug!("FLASH drive inserted.");
+                                // Note: finding FLASH drive root can be fast, but content can appear later
                                 flash_drive_was_created = true;
                                 files_manager_sink.blocking_send(FilesSourceType::FlashDrive)
                             },

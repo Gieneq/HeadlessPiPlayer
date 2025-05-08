@@ -1,6 +1,6 @@
-use std::{path::{Path, PathBuf}, time::Duration};
+use std::{path::{Path, PathBuf}, sync::Arc, time::Duration};
 
-use crate::{FilesManagerSink, FilesSourceType};
+use crate::{FileSubscriber, FilesManagerSink, FilesSourceType};
 
 #[cfg(target_os = "linux")]
 const TMP_ROOT_PATH: &str = "/tmp";
@@ -28,7 +28,7 @@ pub enum FilesManagerError {
     UserMediaNotFound,
 }
 
-pub struct FilesManager {
+pub struct FilesManager{
     tmp_path: PathBuf,
     media_user_path: PathBuf,
     files_source_tx: tokio::sync::mpsc::Sender<FilesSourceType>,
@@ -43,7 +43,7 @@ impl FilesManagerSink for FilesManager {
 
 impl FilesManager {
     const EVENTS_CAP: usize = 32;
-    pub async fn new() -> Result<Self, FilesManagerError> {
+    pub async fn new<S: FileSubscriber + 'static>(subscriber: Option<Arc<S>>) -> Result<Self, FilesManagerError> {
         let tmp_path = PathBuf::from(TMP_ROOT_PATH).join(TMP_DIR_NAME);
 
         let media_user_path = {
@@ -64,7 +64,11 @@ impl FilesManager {
             loop {
                 match files_source_rx.recv().await {
                     Some(FilesSourceType::FlashDrive) => {
-                        if let Err(e) = Self::process_files_from_flash_drive(&tmp_path_shared, &media_user_path_shared).await {
+                        if let Err(e) = Self::process_files_from_flash_drive(
+                            &subscriber,
+                            &tmp_path_shared, 
+                            &media_user_path_shared
+                        ).await {
                             tracing::error!("Failed to process files from flash drive, reason = '{e}'");
                         }
                     },
@@ -83,22 +87,24 @@ impl FilesManager {
         self.media_user_path.clone()
     }
 
-    async fn process_files_from_flash_drive(tmp_path: &Path, media_user_path: &Path) -> Result<(), tokio::io::Error> {
+    async fn process_files_from_flash_drive<S: FileSubscriber>(subscriber: &Option<Arc<S>>, tmp_path: &Path, media_user_path: &Path) -> Result<(), tokio::io::Error> {
         tracing::info!("Attempt to find files in FLASH drive and compy first to temporary dir.");
 
         // Find FLASH drive directory inside media user directory
         if let Some(flash_drive_root) = Self::find_dir_entry_inside(media_user_path, Duration::from_millis(500)).await {
-            
+            tracing::debug!("Found FLASH drive root dir: {flash_drive_root:?}. Attempt to find video files");
+
             // Find first video file
-            if let Ok(Some(video_file_path)) = Self::find_supported_video_file(&flash_drive_root).await {
+            if let Some(video_file_path) = Self::find_supported_video_file(&flash_drive_root, Duration::from_millis(2500)).await {
                 tracing::info!("Found video file in FLASH drive {video_file_path:?}.");
                 
                 tracing::info!("File copied. Attempt to notify subscriber: file deletion");
-                // Notify subscriber about incomming file removal
-                // TODO
-                
-                // Await subscriber is ready
-                // TODO
+                // Notify & await subscriber response about incomming file removal
+                if let Some(subs) = subscriber {
+                    if let Err(e) = subs.on_file_about_to_be_deleted().await {
+                        tracing::warn!("'on_file_about_to_be_deleted' failed reason {e}");
+                    }
+                }
 
                 // Clean temporary directory
                 tracing::info!("Clearing temp directory {video_file_path:?}.");
@@ -121,33 +127,55 @@ impl FilesManager {
 
                 tracing::info!("File copied. Attempt to notify subscriber: new file available");
                 debug_assert_eq!(Self::count_dir_items(tmp_path).await, 1);
+
                 // Notify subscriber new file is ready
-                // TODO
+                if let Some(subs) = subscriber {
+                    if let Err(e) = subs.on_new_file_available(&video_file_destination_path).await {
+                        tracing::warn!("'on_new_file_available' failed reason {e}");
+                    }
+                }
+            } else {
+                tracing::info!("Not found any files :(");
             }
         }
 
         Ok(())
     }
 
-    async fn find_supported_video_file(dir: &Path) -> Result<Option<PathBuf>, tokio::io::Error> {
-        let mut entries = tokio::fs::read_dir(dir).await?;
+    async fn find_supported_video_file(dir: &Path, timeout_duration: Duration) -> Option<PathBuf> {
+        let fut = async {
+            loop {
+                let mut entries = match tokio::fs::read_dir(dir).await {
+                    Ok(entries) => entries,
+                    Err(e) => {
+                        // Directory may not exist yet (e.g. mount race), log and retry
+                        tracing::debug!("Cannot read dir {:?}: {:?}", dir, e);
+                        tokio::time::sleep(Duration::from_millis(200)).await;
+                        continue;
+                    }
+                };
     
-        while let Some(entry) = entries.next_entry().await? {
-            let path = entry.path();
-    
-            if path.is_dir() {
-                // Recurse into subdirectories
-                if let Some(found) = Box::pin(Self::find_supported_video_file(&path)).await? {
-                    return Ok(Some(found));
+                while let Ok(Some(entry)) = entries.next_entry().await {
+                    let path = entry.path();
+                    if path.is_file() && is_supported_video_file(&path) {
+                        return Some(path)
+                    }
                 }
-            } else if is_supported_video_file(&path) {
-                return Ok(Some(path));
+    
+                // Nothing found yet — wait before trying again
+                tokio::time::sleep(Duration::from_millis(250)).await;
+            }
+        };
+    
+        match tokio::time::timeout(timeout_duration, fut).await {
+            Ok(result) => result,
+            Err(_) => {
+                tracing::debug!("Timeout reached while searching video file in {:?}", dir);
+                None
             }
         }
-    
-        Ok(None)
-    }
-    
+    }    
+
     async fn count_dir_items(dir_path: &Path) -> usize {
         match tokio::fs::read_dir(dir_path).await {
             Ok(mut entries) => {
@@ -216,6 +244,8 @@ impl FilesManager {
 
 #[cfg(test)]
 mod tests {
+    use crate::video_player::VideoPlayer;
+
     use super::*;
 
     fn init_test_tracing() {
@@ -229,6 +259,6 @@ mod tests {
     async fn test_file_manager_init() {
         init_test_tracing();
 
-        let _file_manager = FilesManager::new().await.unwrap();
+        let _file_manager = FilesManager::new::<VideoPlayer>(None).await.unwrap();
     }
 }

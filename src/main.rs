@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
-use headless_pi_player::{file_manager::FilesManager, flash_drive_observer::FileSourceFlashDrive, FilesSource, FilesSourceHandler};
+use headless_pi_player::{file_manager::FilesManager, flash_drive_observer::FileSourceFlashDrive, video_player::VideoPlayer, FilesSource, FilesSourceHandler};
 
 fn init_tracing() {
     let _ = tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::INFO)
+        .with_max_level(tracing::Level::DEBUG)
         .try_init();
 }
 
@@ -12,7 +12,10 @@ fn init_tracing() {
 async fn main() {
     init_tracing();
 
-    let files_manager = FilesManager::new().await.expect("Could not create files manager");
+    let video_player = VideoPlayer::run().await;
+    let video_player = Arc::new(video_player);
+
+    let files_manager = FilesManager::new(Some(video_player)).await.expect("Could not create files manager");
     let media_user_path = files_manager.get_media_user_path();
 
     // Spawn shutdown signal
