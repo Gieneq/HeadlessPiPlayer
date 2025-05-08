@@ -31,8 +31,9 @@ impl FileSubscriber for VideoPlayer {
 }
 
 impl VideoPlayer {
-    pub async fn run() -> Self {
+    pub async fn run(looping: bool) -> Self {
         let (player_ctrl_tx, player_ctrl_rx) = std::sync::mpsc::channel();
+        let player_ctrl_tx_shared = player_ctrl_tx.clone();
         
         let _video_player_task = tokio::task::spawn_blocking(move || {
             let vlc_instance = vlc::Instance::new().expect("Failed to create VLC instance");
@@ -42,10 +43,27 @@ impl VideoPlayer {
                 match player_ctrl_rx.recv()  {
                     Ok(VideoPlayerCommand::Play(path_buf)) => {
                         tracing::info!("VLC playing {path_buf:?}");
-                        let media = vlc::Media::new_path(&vlc_instance, &path_buf).unwrap();
-                        player.set_media(&media);
-                        if player.play().is_err() {
-                            tracing::warn!("Video Player could not play {path_buf:?}.");
+                        if let Some(media) = vlc::Media::new_path(&vlc_instance, &path_buf) {
+                            let path_buf_sharde = path_buf.clone();
+                            let player_ctrl_tx_shared = player_ctrl_tx_shared.clone();
+                            if media.event_manager().attach(vlc::EventType::MediaStateChanged, move |event, _| {
+                                if let vlc::Event::MediaStateChanged(state) = event {
+                                    if looping && (state == vlc::State::Ended || state == vlc::State::Error) {
+                                        tracing::debug!("Looping");
+                                        let _ = player_ctrl_tx_shared.send(VideoPlayerCommand::Play(path_buf_sharde.clone()));
+                                    }
+                                }
+                            }).is_err() {
+                                tracing::error!("Failed to set VLC event manager");
+                            }
+                            
+                            
+                            player.set_media(&media);
+                            if player.play().is_err() {
+                                tracing::warn!("Video Player could not play {path_buf:?}.");
+                            }
+                        } else {
+                            tracing::warn!("Video {path_buf:?} not found by VLC");
                         }
                     },
                     Ok(VideoPlayerCommand::Stop(stop_feedback_tx)) => {

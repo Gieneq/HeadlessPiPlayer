@@ -12,7 +12,7 @@ fn init_tracing() {
 async fn main() {
     init_tracing();
 
-    let video_player = VideoPlayer::run().await;
+    let video_player = VideoPlayer::run(true).await;
     let video_player = Arc::new(video_player);
 
     let files_manager = FilesManager::new(Some(video_player)).await.expect("Could not create files manager");
