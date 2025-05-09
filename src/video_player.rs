@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+use vlc::MediaPlayerAudioEx;
+
 use crate::{FileSubscriber, FileSubscriberError};
 
 pub struct VideoPlayer {
@@ -33,32 +35,27 @@ impl FileSubscriber for VideoPlayer {
 impl VideoPlayer {
     pub async fn run(looping: bool) -> Self {
         let (player_ctrl_tx, player_ctrl_rx) = std::sync::mpsc::channel();
-        let player_ctrl_tx_shared = player_ctrl_tx.clone();
         
         let _video_player_task = tokio::task::spawn_blocking(move || {
-            let vlc_instance = vlc::Instance::new().expect("Failed to create VLC instance");
+            let vlc_instance = vlc::Instance::with_args(&["--aout=dummy", "--fullscreen", "--no-video-title-show"]).expect("Failed to create VLC instance");
             let player = vlc::MediaPlayer::new(&vlc_instance).expect("Failed to create MediaPlayer");
+            player.set_mute(true);
 
             loop {
                 match player_ctrl_rx.recv()  {
                     Ok(VideoPlayerCommand::Play(path_buf)) => {
                         tracing::info!("VLC playing {path_buf:?}");
                         if let Some(media) = vlc::Media::new_path(&vlc_instance, &path_buf) {
-                            let path_buf_sharde = path_buf.clone();
-                            let player_ctrl_tx_shared = player_ctrl_tx_shared.clone();
-                            if media.event_manager().attach(vlc::EventType::MediaStateChanged, move |event, _| {
-                                if let vlc::Event::MediaStateChanged(state) = event {
-                                    if looping && (state == vlc::State::Ended || state == vlc::State::Error) {
-                                        tracing::debug!("Looping");
-                                        let _ = player_ctrl_tx_shared.send(VideoPlayerCommand::Play(path_buf_sharde.clone()));
-                                    }
-                                }
-                            }).is_err() {
-                                tracing::error!("Failed to set VLC event manager");
+                            if looping {
+                                media.add_option(":input-repeat=65535");
                             }
                             
-                            
+                            media.add_option(":no-audio");
+                            media.add_option(":fullscreen");
+
                             player.set_media(&media);
+                            player.set_fullscreen(true);
+
                             if player.play().is_err() {
                                 tracing::warn!("Video Player could not play {path_buf:?}.");
                             }
@@ -67,7 +64,7 @@ impl VideoPlayer {
                         }
                     },
                     Ok(VideoPlayerCommand::Stop(stop_feedback_tx)) => {
-                        tracing::info!("VLC ptopping playback");
+                        tracing::info!("VLC stopping playback");
                         player.stop();
                         tracing::debug!("VLC state after stop: {:?}", player.state());
 

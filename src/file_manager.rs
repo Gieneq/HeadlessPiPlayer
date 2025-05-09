@@ -1,6 +1,6 @@
 use std::{path::{Path, PathBuf}, sync::Arc, time::Duration};
 
-use crate::{FileSubscriber, FilesManagerSink, FilesSourceType};
+use crate::{FileSubscriber, FilesManagerSink, FilesSourceType, WiFiCfgSubscriber};
 
 #[cfg(target_os = "linux")]
 const TMP_ROOT_PATH: &str = "/tmp";
@@ -11,6 +11,8 @@ const TMP_DIR_NAME: &str = "headlesspiplayer";
 const MEDIA_ROOT_PATH: &str = "/media";
 
 const SUPPORTED_VIDEO_FILES: &[&str] = &["avi", "mp4"];
+
+const WIFI_CFG_FILENAME: &str = "wifi_config.json";
 
 fn is_supported_video_file(path: &Path) -> bool {
     path.extension()
@@ -43,15 +45,20 @@ impl FilesManagerSink for FilesManager {
 
 impl FilesManager {
     const EVENTS_CAP: usize = 32;
-    pub async fn new<S: FileSubscriber + 'static>(subscriber: Option<Arc<S>>) -> Result<Self, FilesManagerError> {
+    pub async fn new<S: FileSubscriber + 'static, W: WiFiCfgSubscriber + 'static>(
+        subscriber: Option<Arc<S>>,
+        wifi_cfg_subscriber: Option<Arc<W>>,
+    ) -> Result<Self, FilesManagerError> {
         let tmp_path = PathBuf::from(TMP_ROOT_PATH).join(TMP_DIR_NAME);
 
+        tracing::info!("Finding media user path");
         let media_user_path = {
             let media_root = PathBuf::from(MEDIA_ROOT_PATH);
             Self::find_dir_entry_inside(&media_root, Duration::from_millis(500)).await
                 .ok_or(FilesManagerError::UserMediaNotFound)?
         };
 
+        tracing::info!("Attempt to recreate temporary directory");
         Self::recreate_dir(&tmp_path).await?;
         
         let tmp_path_shared = tmp_path.clone();
@@ -62,10 +69,12 @@ impl FilesManager {
         // Event loop
         let event_loop_task = tokio::spawn(async move {
             loop {
+                tracing::info!("Starting FilesManager event loop");
                 match files_source_rx.recv().await {
                     Some(FilesSourceType::FlashDrive) => {
                         if let Err(e) = Self::process_files_from_flash_drive(
                             &subscriber,
+                            &wifi_cfg_subscriber,
                             &tmp_path_shared, 
                             &media_user_path_shared
                         ).await {
@@ -87,62 +96,102 @@ impl FilesManager {
         self.media_user_path.clone()
     }
 
-    async fn process_files_from_flash_drive<S: FileSubscriber>(subscriber: &Option<Arc<S>>, tmp_path: &Path, media_user_path: &Path) -> Result<(), tokio::io::Error> {
+    async fn process_files_from_flash_drive<S: FileSubscriber, W: WiFiCfgSubscriber>(
+        subscriber: &Option<Arc<S>>, 
+        wifi_cfg_subscriber: &Option<Arc<W>>, 
+        tmp_path: &Path, media_user_path: 
+        &Path
+    ) -> Result<(), tokio::io::Error> {
         tracing::info!("Attempt to find files in FLASH drive and compy first to temporary dir.");
 
         // Find FLASH drive directory inside media user directory
         if let Some(flash_drive_root) = Self::find_dir_entry_inside(media_user_path, Duration::from_millis(500)).await {
-            tracing::debug!("Found FLASH drive root dir: {flash_drive_root:?}. Attempt to find video files");
-
-            // Find first video file
-            if let Some(video_file_path) = Self::find_supported_video_file(&flash_drive_root, Duration::from_millis(2500)).await {
-                tracing::info!("Found video file in FLASH drive {video_file_path:?}.");
-                
-                tracing::info!("File copied. Attempt to notify subscriber: file deletion");
-                // Notify & await subscriber response about incomming file removal
-                if let Some(subs) = subscriber {
-                    if let Err(e) = subs.on_file_about_to_be_deleted().await {
-                        tracing::warn!("'on_file_about_to_be_deleted' failed reason {e}");
-                    }
-                }
-
-                // Clean temporary directory
-                tracing::info!("Clearing temp directory {video_file_path:?}.");
-                Self::recreate_dir(tmp_path).await.inspect_err(|e| {
-                    tracing::warn!("Could not recreate temp dir, reason = {e}");
-                })?;
-
-                // Copy file
-                let video_file_name = video_file_path
-                    .file_name()
-                    .ok_or_else(|| tokio::io::Error::new(tokio::io::ErrorKind::Other, "File has no name"))?;
-
-                // Function 'copy' requires path to file not directory
-                let video_file_destination_path = tmp_path.join(video_file_name);
-
-                tracing::info!("Attemt to copy file {video_file_path:?} to {video_file_destination_path:?}.");
-                tokio::fs::copy(&video_file_path, &video_file_destination_path).await.inspect_err(|e| {
-                    tracing::warn!("Could not copy file from {video_file_path:?} to {video_file_destination_path:?}, reason = {e}");
-                })?;
-
-                tracing::info!("File copied. Attempt to notify subscriber: new file available");
-                debug_assert_eq!(Self::count_dir_items(tmp_path).await, 1);
-
-                // Notify subscriber new file is ready
-                if let Some(subs) = subscriber {
-                    if let Err(e) = subs.on_new_file_available(&video_file_destination_path).await {
-                        tracing::warn!("'on_new_file_available' failed reason {e}");
-                    }
-                }
-            } else {
-                tracing::info!("Not found any files :(");
-            }
+            tracing::debug!("Found FLASH drive root dir: {flash_drive_root:?}.");
+            Self::find_any_video_file_notify_subscriber(subscriber, tmp_path, &flash_drive_root).await?;
+            Self::find_wifi_credentials_notify_subscriber(wifi_cfg_subscriber, &flash_drive_root).await?;
         }
 
         Ok(())
     }
 
+    async fn find_any_video_file_notify_subscriber<S: FileSubscriber>(subscriber: &Option<Arc<S>>, tmp_path: &Path, flash_drive_root: &Path) -> Result<(), std::io::Error> {
+        tracing::debug!("Attempt to find video files.");
+
+        if let Some(video_file_path) = Self::find_supported_video_file(flash_drive_root, Duration::from_millis(2500)).await {
+            tracing::info!("Found video file in FLASH drive {video_file_path:?}.");
+        
+            tracing::info!("File copied. Attempt to notify subscriber: file deletion");
+            // Notify & await subscriber response about incomming file removal
+            if let Some(subs) = subscriber {
+                if let Err(e) = subs.on_file_about_to_be_deleted().await {
+                    tracing::warn!("'on_file_about_to_be_deleted' failed reason {e}");
+                }
+            }
+
+            // Clean temporary directory
+            tracing::info!("Clearing temp directory {video_file_path:?}.");
+            Self::recreate_dir(tmp_path).await.inspect_err(|e| {
+                tracing::warn!("Could not recreate temp dir, reason = {e}");
+            })?;
+
+            // Copy file
+            let video_file_name = video_file_path
+                .file_name()
+                .ok_or_else(|| tokio::io::Error::new(tokio::io::ErrorKind::Other, "File has no name"))?;
+
+            // Function 'copy' requires path to file not directory
+            let video_file_destination_path = tmp_path.join(video_file_name);
+
+            tracing::info!("Attemt to copy file {video_file_path:?} to {video_file_destination_path:?}.");
+            tokio::fs::copy(&video_file_path, &video_file_destination_path).await.inspect_err(|e| {
+                tracing::warn!("Could not copy file from {video_file_path:?} to {video_file_destination_path:?}, reason = {e}");
+            })?;
+
+            tracing::info!("File copied. Attempt to notify subscriber: new file available");
+            debug_assert_eq!(Self::count_dir_items(tmp_path).await, 1);
+
+            // Notify subscriber new file is ready
+            if let Some(subs) = subscriber {
+                if let Err(e) = subs.on_new_file_available(&video_file_destination_path).await {
+                    tracing::warn!("'on_new_file_available' failed reason {e}");
+                }
+            }
+        } else {
+            tracing::info!("Not found any files :(");
+        }
+        Ok(())
+    }
+
+    async fn find_wifi_credentials_notify_subscriber<W: WiFiCfgSubscriber>(wifi_cfg_subscriber: &Option<Arc<W>>, flash_drive_root: &Path) -> Result<(), std::io::Error> {
+        tracing::debug!("Attempt to find WiFi crednetials file.");
+
+        if let Some(config_path) = Self::find_file_named(flash_drive_root, WIFI_CFG_FILENAME, Duration::from_millis(2500)).await {
+            let config_str = tokio::fs::read_to_string(&config_path).await?;
+            
+            // Notify specialized subscriber (if registered)
+            if let Some(wifi_cfg_subscriber) = wifi_cfg_subscriber {
+                if let Err(e) = wifi_cfg_subscriber.apply_wifi_config(&config_str).await {
+                    tracing::warn!("'apply_wifi_config' failed reason {e}");
+                }
+            }
+        }
+        Ok(())
+    }
+
+    async fn find_file_named(dir: &Path, file_name: &str, timeout_duration: Duration) -> Option<PathBuf> {
+        Self::find_file_by(dir, |entry_path| {
+            entry_path.file_name()
+                .and_then(|name| name.to_str())
+                .map(|name| name == file_name)
+                .unwrap_or(false)
+        }, timeout_duration).await
+    }
+
     async fn find_supported_video_file(dir: &Path, timeout_duration: Duration) -> Option<PathBuf> {
+        Self::find_file_by(dir, is_supported_video_file, timeout_duration).await
+    }    
+
+    async fn find_file_by<P: Fn(&Path) -> bool>(dir: &Path, predicate: P, timeout_duration: Duration) -> Option<PathBuf> {
         let fut = async {
             loop {
                 let mut entries = match tokio::fs::read_dir(dir).await {
@@ -157,7 +206,7 @@ impl FilesManager {
     
                 while let Ok(Some(entry)) = entries.next_entry().await {
                     let path = entry.path();
-                    if path.is_file() && is_supported_video_file(&path) {
+                    if path.is_file() && predicate(&path) {
                         return Some(path)
                     }
                 }
@@ -194,7 +243,9 @@ impl FilesManager {
             let initial_items_count = Self::count_dir_items(dir_path).await;
             tracing::debug!("Initialy '{dir_path:?}' exists and contains {initial_items_count} items.");
             
-            tokio::fs::remove_dir_all(dir_path).await?;
+            tokio::fs::remove_dir_all(dir_path).await
+                .inspect_err(|e| tracing::error!("Connot remove dirs {dir_path:?} reasone {e}."))?;
+            
         } else {
             tracing::debug!("Initialy '{dir_path:?}' dir not exist.");
         }
@@ -245,6 +296,7 @@ impl FilesManager {
 #[cfg(test)]
 mod tests {
     use crate::video_player::VideoPlayer;
+    use crate::wifi_manager::WiFiManager;
 
     use super::*;
 
@@ -259,6 +311,6 @@ mod tests {
     async fn test_file_manager_init() {
         init_test_tracing();
 
-        let _file_manager = FilesManager::new::<VideoPlayer>(None).await.unwrap();
+        let _file_manager = FilesManager::new::<VideoPlayer, WiFiManager>(None, None).await.unwrap();
     }
 }
