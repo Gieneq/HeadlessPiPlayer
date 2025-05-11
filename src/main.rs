@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use headless_pi_player::{file_manager::FilesManager, flash_drive_observer::FileSourceFlashDrive, video_player::VideoPlayer, FilesSource, FilesSourceHandler};
+use headless_pi_player::{file_manager::FilesManager, flash_drive_observer::FileSourceFlashDrive, video_player::VideoPlayer, webserver::WebServer, FilesSource, FilesSourceHandler};
 
 fn init_tracing() {
     let _ = tracing_subscriber::fmt()
@@ -34,6 +34,8 @@ async fn main() {
 
     let source_flash_drive = FileSourceFlashDrive::new(media_user_path).await
         .start(files_manager.clone()).await.expect("msg");
+
+    let web_server = WebServer::run().await.expect("Could not start web server");
 
     // Wait for Ctrl+C
     shutdown_notify.notified().await;

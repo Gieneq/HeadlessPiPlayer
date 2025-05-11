@@ -3,6 +3,7 @@ use std::{path::Path, sync::Arc};
 pub mod flash_drive_observer;
 pub mod file_manager;
 pub mod video_player;
+pub mod webserver;
 
 #[derive(Debug)]
 pub enum FilesSourceType {
