@@ -159,3 +159,10 @@ sudo systemctl start headless_pi_player.service
 
 sudo systemctl status headless_pi_player.service
 ```
+## Testing
+
+Upload file cmd/curl:
+
+```cmd
+curl -F "file=@<path_to_file>"  http://<pi_address>:8080/upload
+```

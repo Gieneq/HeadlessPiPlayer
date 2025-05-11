@@ -231,6 +231,7 @@ name = "headless_pi_player"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "bytes",
  "ctrlc",
  "notify",
  "serde",

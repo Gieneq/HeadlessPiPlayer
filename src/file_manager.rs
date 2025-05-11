@@ -67,8 +67,8 @@ impl FilesManager {
         let (files_source_tx, mut files_source_rx) = tokio::sync::mpsc::channel(Self::EVENTS_CAP);
         // Event loop
         let event_loop_task = tokio::spawn(async move {
+            tracing::info!("Starting FilesManager event loop");
             loop {
-                tracing::info!("Starting FilesManager event loop");
                 match files_source_rx.recv().await {
                     Some(FilesSourceType::FlashDrive) => {
                         if let Err(e) = Self::process_files_from_flash_drive(
@@ -77,6 +77,16 @@ impl FilesManager {
                             &media_user_path_shared
                         ).await {
                             tracing::error!("Failed to process files from flash drive, reason = '{e}'");
+                        }
+                    },
+                    Some(FilesSourceType::UploadedVideo { filename, data }) => {
+                        if let Err(e) = Self::process_files_from_webserver(
+                            &subscriber,
+                            &tmp_path_shared,
+                            &filename,
+                            data
+                        ).await {
+                            tracing::error!("Failed to save uploaded video: {e}");
                         }
                     },
                     None => {
@@ -93,11 +103,49 @@ impl FilesManager {
     pub fn get_media_user_path(&self) -> PathBuf {
         self.media_user_path.clone()
     }
+    
+    async fn process_files_from_webserver<S: FileSubscriber>(
+        subscriber: &Option<Arc<S>>,  
+        tmp_path: &Path, 
+        filename: &str,
+        data: bytes::Bytes
+    ) -> Result<(), tokio::io::Error> {
+        tracing::info!("Attempt to save data received by webserver.");
+
+        tracing::info!("Attempt to notify subscriber: file deletion");
+        // Notify & await subscriber response about incomming file removal
+        if let Some(subs) = subscriber {
+            if let Err(e) = subs.on_file_about_to_be_deleted().await {
+                tracing::warn!("'on_file_about_to_be_deleted' failed reason {e}");
+            }
+        }
+        // Clean temporary directory
+        tracing::info!("Clearing temp directory {tmp_path:?}.");
+        Self::recreate_dir(tmp_path).await.inspect_err(|e| {
+            tracing::warn!("Could not recreate temp dir, reason = {e}");
+        })?;
+
+        // Save file
+        let save_path = tmp_path.join(filename);
+        tokio::fs::write(&save_path, data).await
+            .inspect_err(|e| {
+                tracing::error!("Failed to save file from webserver, reason {e}");
+            })?;
+
+        // Notify subscriber new file is ready
+        if let Some(subs) = subscriber {
+            if let Err(e) = subs.on_new_file_available(&save_path).await {
+                tracing::warn!("'on_new_file_available' failed reason {e}");
+            }
+        }
+
+        Ok(())
+    }
 
     async fn process_files_from_flash_drive<S: FileSubscriber>(
         subscriber: &Option<Arc<S>>,  
-        tmp_path: &Path, media_user_path: 
-        &Path
+        tmp_path: &Path, 
+        media_user_path: &Path
     ) -> Result<(), tokio::io::Error> {
         tracing::info!("Attempt to find files in FLASH drive and compy first to temporary dir.");
 
@@ -116,7 +164,7 @@ impl FilesManager {
         if let Some(video_file_path) = Self::find_supported_video_file(flash_drive_root, Duration::from_millis(2500)).await {
             tracing::info!("Found video file in FLASH drive {video_file_path:?}.");
         
-            tracing::info!("File copied. Attempt to notify subscriber: file deletion");
+            tracing::info!("Attempt to notify subscriber: file deletion");
             // Notify & await subscriber response about incomming file removal
             if let Some(subs) = subscriber {
                 if let Err(e) = subs.on_file_about_to_be_deleted().await {
@@ -125,7 +173,7 @@ impl FilesManager {
             }
 
             // Clean temporary directory
-            tracing::info!("Clearing temp directory {video_file_path:?}.");
+            tracing::info!("Clearing temp directory {tmp_path:?}.");
             Self::recreate_dir(tmp_path).await.inspect_err(|e| {
                 tracing::warn!("Could not recreate temp dir, reason = {e}");
             })?;

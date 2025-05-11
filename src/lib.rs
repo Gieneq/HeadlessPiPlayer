@@ -8,6 +8,10 @@ pub mod webserver;
 #[derive(Debug)]
 pub enum FilesSourceType {
     FlashDrive,
+    UploadedVideo {
+        filename: String,
+        data: bytes::Bytes,
+    },
 }
 
 pub trait FilesManagerSink: Send + Sync {
