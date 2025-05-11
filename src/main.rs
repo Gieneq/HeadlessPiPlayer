@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use headless_pi_player::{file_manager::FilesManager, flash_drive_observer::FileSourceFlashDrive, video_player::VideoPlayer, webserver::WebServer, FilesSource, FilesSourceHandler};
 
@@ -35,12 +35,16 @@ async fn main() {
     let source_flash_drive = FileSourceFlashDrive::new(media_user_path).await
         .start(files_manager.clone()).await.expect("msg");
 
-    let web_server = WebServer::run().await.expect("Could not start web server");
+    let web_server = WebServer
+        .start(files_manager.clone()).await.expect("Could not start web server");
 
     // Wait for Ctrl+C
     shutdown_notify.notified().await;
 
     // Gracefully shut down
     source_flash_drive.shutdown().await.expect("Failed to shut down FLASH drive source");
+    web_server.shutdown().await.expect("Failed to shut down webserver source");
+    drop(files_manager);
+    tokio::time::sleep(Duration::from_millis(500)).await;
     tracing::info!("Shutdown complete.");
 }
