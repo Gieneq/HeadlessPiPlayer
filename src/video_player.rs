@@ -37,7 +37,14 @@ impl VideoPlayer {
         let (player_ctrl_tx, player_ctrl_rx) = std::sync::mpsc::channel();
         
         let _video_player_task = tokio::task::spawn_blocking(move || {
-            let vlc_instance = vlc::Instance::with_args(&["--aout=dummy", "--fullscreen", "--no-video-title-show"]).expect("Failed to create VLC instance");
+            let vlc_instance = vlc::Instance::with_args(&[
+                "--aout=dummy", 
+                "--fullscreen", 
+                "--vout=x11", 
+                "--no-video-title-show",
+                "--avcodec-hw=none",
+            ]).expect("Failed to create VLC instance");
+
             let player = vlc::MediaPlayer::new(&vlc_instance).expect("Failed to create MediaPlayer");
             player.set_mute(true);
 

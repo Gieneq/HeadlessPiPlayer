@@ -1,6 +1,6 @@
 use std::{path::{Path, PathBuf}, sync::Arc, time::Duration};
 
-use crate::{FileSubscriber, FilesManagerSink, FilesSourceType, WiFiCfgSubscriber};
+use crate::{FileSubscriber, FilesManagerSink, FilesSourceType};
 
 #[cfg(target_os = "linux")]
 const TMP_ROOT_PATH: &str = "/tmp";
@@ -45,9 +45,8 @@ impl FilesManagerSink for FilesManager {
 
 impl FilesManager {
     const EVENTS_CAP: usize = 32;
-    pub async fn new<S: FileSubscriber + 'static, W: WiFiCfgSubscriber + 'static>(
+    pub async fn new<S: FileSubscriber + 'static>(
         subscriber: Option<Arc<S>>,
-        wifi_cfg_subscriber: Option<Arc<W>>,
     ) -> Result<Self, FilesManagerError> {
         let tmp_path = PathBuf::from(TMP_ROOT_PATH).join(TMP_DIR_NAME);
 
@@ -74,7 +73,6 @@ impl FilesManager {
                     Some(FilesSourceType::FlashDrive) => {
                         if let Err(e) = Self::process_files_from_flash_drive(
                             &subscriber,
-                            &wifi_cfg_subscriber,
                             &tmp_path_shared, 
                             &media_user_path_shared
                         ).await {
@@ -96,9 +94,8 @@ impl FilesManager {
         self.media_user_path.clone()
     }
 
-    async fn process_files_from_flash_drive<S: FileSubscriber, W: WiFiCfgSubscriber>(
-        subscriber: &Option<Arc<S>>, 
-        wifi_cfg_subscriber: &Option<Arc<W>>, 
+    async fn process_files_from_flash_drive<S: FileSubscriber>(
+        subscriber: &Option<Arc<S>>,  
         tmp_path: &Path, media_user_path: 
         &Path
     ) -> Result<(), tokio::io::Error> {
@@ -108,7 +105,6 @@ impl FilesManager {
         if let Some(flash_drive_root) = Self::find_dir_entry_inside(media_user_path, Duration::from_millis(500)).await {
             tracing::debug!("Found FLASH drive root dir: {flash_drive_root:?}.");
             Self::find_any_video_file_notify_subscriber(subscriber, tmp_path, &flash_drive_root).await?;
-            Self::find_wifi_credentials_notify_subscriber(wifi_cfg_subscriber, &flash_drive_root).await?;
         }
 
         Ok(())
@@ -158,22 +154,6 @@ impl FilesManager {
             }
         } else {
             tracing::info!("Not found any files :(");
-        }
-        Ok(())
-    }
-
-    async fn find_wifi_credentials_notify_subscriber<W: WiFiCfgSubscriber>(wifi_cfg_subscriber: &Option<Arc<W>>, flash_drive_root: &Path) -> Result<(), std::io::Error> {
-        tracing::debug!("Attempt to find WiFi crednetials file.");
-
-        if let Some(config_path) = Self::find_file_named(flash_drive_root, WIFI_CFG_FILENAME, Duration::from_millis(2500)).await {
-            let config_str = tokio::fs::read_to_string(&config_path).await?;
-            
-            // Notify specialized subscriber (if registered)
-            if let Some(wifi_cfg_subscriber) = wifi_cfg_subscriber {
-                if let Err(e) = wifi_cfg_subscriber.apply_wifi_config(&config_str).await {
-                    tracing::warn!("'apply_wifi_config' failed reason {e}");
-                }
-            }
         }
         Ok(())
     }
@@ -245,7 +225,7 @@ impl FilesManager {
             
             tokio::fs::remove_dir_all(dir_path).await
                 .inspect_err(|e| tracing::error!("Connot remove dirs {dir_path:?} reasone {e}."))?;
-            
+
         } else {
             tracing::debug!("Initialy '{dir_path:?}' dir not exist.");
         }
@@ -296,7 +276,6 @@ impl FilesManager {
 #[cfg(test)]
 mod tests {
     use crate::video_player::VideoPlayer;
-    use crate::wifi_manager::WiFiManager;
 
     use super::*;
 
@@ -311,6 +290,6 @@ mod tests {
     async fn test_file_manager_init() {
         init_test_tracing();
 
-        let _file_manager = FilesManager::new::<VideoPlayer, WiFiManager>(None, None).await.unwrap();
+        let _file_manager = FilesManager::new::<VideoPlayer>(None).await.unwrap();
     }
 }

@@ -3,7 +3,6 @@ use std::{path::Path, sync::Arc};
 pub mod flash_drive_observer;
 pub mod file_manager;
 pub mod video_player;
-pub mod wifi_manager;
 
 #[derive(Debug)]
 pub enum FilesSourceType {
@@ -40,26 +39,4 @@ pub trait FileSubscriber: Send + Sync {
 
     /// Called when a new file is ready.
     fn on_new_file_available(&self, file_path: &Path) -> impl std::future::Future<Output = Result<(), FileSubscriberError>> + Send;
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum WifiConfigError {
-    #[error("SerdeError reason = {0}.")]
-    SerdeError(#[from] serde_json::Error),
-    
-    #[error("StdIoError reason = {0}.")]
-    StdIoError(#[from] std::io::Error),
-
-    #[error("NmcliRescanFailed")]
-    NmcliRescanFailed,
-
-    #[error("NmcliConnectFailed")]
-    NmcliConnectFailed,
-
-    #[error("Timeout")]
-    Timeout,
-}
-
-pub trait WiFiCfgSubscriber: Send + Sync {
-    fn apply_wifi_config(&self, config_str: &str) -> impl std::future::Future<Output = Result<(), WifiConfigError>> + Send;
 }
