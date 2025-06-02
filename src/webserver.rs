@@ -1,6 +1,6 @@
 use std::{net::SocketAddr, sync::Arc};
 
-use axum::{extract, http::StatusCode, response::{Html, IntoResponse}, routing::{get, post}, Router};
+use axum::{extract::{self, DefaultBodyLimit}, http::StatusCode, response::{Html, IntoResponse}, routing::{get, post}, Router};
 use tower_http::trace::{DefaultMakeSpan, DefaultOnRequest, DefaultOnResponse, TraceLayer};
 
 use crate::{FilesManagerSink, FilesSource, FilesSourceHandler, FilesSourceType};
@@ -89,10 +89,9 @@ impl WebServer {
         mut multipart: extract::Multipart
     ) -> impl IntoResponse {
         while let Some(field) = multipart.next_field().await.unwrap_or(None) {
-            tracing::info!("Received field {field:?}.");
-            
             if let Some(name) = field.name() {
                 if name != "file" {
+                    println!("Bad field name '{name}'.");
                     continue;
                 }
                 
@@ -104,8 +103,7 @@ impl WebServer {
                 };
 
                 let data = match field.bytes().await {
-                    Ok(data) if data.len() <= Self::MAX_VIDEO_FILESIZE_BYTES => data,
-                    Ok(_) => return (StatusCode::PAYLOAD_TOO_LARGE, "File too big").into_response(),
+                    Ok(data) => data,
                     Err(_) => return (StatusCode::BAD_REQUEST, "Failed to read file").into_response(),
                 };
 
@@ -115,6 +113,8 @@ impl WebServer {
                 }
 
                 return (StatusCode::OK, "Uploaded").into_response();
+            } else {
+                println!("Field missing name!")
             }
         }
 
@@ -124,7 +124,9 @@ impl WebServer {
     fn build_router(app_data: Arc<WebServerAppData>) -> Router {
         Router::new()
             .route("/health", get(Self::health_check))
-            .route("/upload", get(Self::upload_form).post(Self::upload_video))
+            .route("/upload", post(Self::upload_video))
+                .layer(DefaultBodyLimit::max(Self::MAX_VIDEO_FILESIZE_BYTES))
+            .route("/upload", get(Self::upload_form))
             .with_state(app_data)
     }
 }

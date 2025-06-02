@@ -40,7 +40,7 @@ impl VideoPlayer {
             let vlc_instance = vlc::Instance::with_args(&[
                 "--aout=dummy", 
                 "--fullscreen", 
-                "--vout=x11", 
+                 
                 "--no-video-title-show",
                 "--avcodec-hw=none",
             ]).expect("Failed to create VLC instance");

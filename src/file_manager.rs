@@ -30,7 +30,7 @@ pub enum FilesManagerError {
     UserMediaNotFound,
 }
 
-pub struct FilesManager{
+pub struct FilesManager {
     tmp_path: PathBuf,
     media_user_path: PathBuf,
     files_source_tx: tokio::sync::mpsc::Sender<FilesSourceType>,

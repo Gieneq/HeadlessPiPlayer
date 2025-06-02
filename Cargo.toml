@@ -7,7 +7,7 @@ edition = "2024"
 tokio = { version="1.45.0", features = [ "full" ]}
 
 axum = { version = "0.8.4", features = ["multipart"] }
-tower-http = { version = "0.6.4", features = ["trace"] }
+tower-http = { version = "0.6.4", features = ["trace", "limit"] }
 
 bytes = "1.10.1"
 
