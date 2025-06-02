@@ -1,6 +1,6 @@
 use std::{sync::Arc, time::Duration};
 
-use headless_pi_player::{file_manager::FilesManager, flash_drive_observer::FileSourceFlashDrive, video_player::VideoPlayer, webserver::WebServer, FilesSource, FilesSourceHandler};
+use headless_pi_player::{file_manager::FilesManager, flash_drive_observer::FileSourceFlashDrive, video_player::VideoPlayer, webserver::WebServer, wifi_manager::wifi_manager_procedure, FilesSource, FilesSourceHandler};
 
 fn init_tracing() {
     let _ = tracing_subscriber::fmt()
@@ -15,7 +15,10 @@ async fn main() {
     let video_player = VideoPlayer::run(true).await;
     let video_player = Arc::new(video_player);
 
-    let files_manager = FilesManager::new::<VideoPlayer>(Some(video_player)).await.expect("Could not create files manager");
+    let files_manager = FilesManager::new::<VideoPlayer>(
+        Some(video_player),
+        Some(wifi_manager_procedure)
+    ).await.expect("Could not create files manager");
     let media_user_path = files_manager.get_media_user_path();
 
     // Spawn shutdown signal

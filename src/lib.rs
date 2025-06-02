@@ -4,6 +4,7 @@ pub mod flash_drive_observer;
 pub mod file_manager;
 pub mod video_player;
 pub mod webserver;
+pub mod wifi_manager;
 
 #[derive(Debug)]
 pub enum FilesSourceType {
@@ -45,3 +46,5 @@ pub trait FileSubscriber: Send + Sync {
     /// Called when a new file is ready.
     fn on_new_file_available(&self, file_path: &Path) -> impl std::future::Future<Output = Result<(), FileSubscriberError>> + Send;
 }
+
+pub type WiFiCredentialsProcedure = fn(&[u8]) -> Result<(), Box<dyn std::error::Error>>;

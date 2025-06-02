@@ -1,6 +1,6 @@
 use std::{path::{Path, PathBuf}, sync::Arc, time::Duration};
 
-use crate::{FileSubscriber, FilesManagerSink, FilesSourceType};
+use crate::{FileSubscriber, FilesManagerSink, FilesSourceType, WiFiCredentialsProcedure};
 
 #[cfg(target_os = "linux")]
 const TMP_ROOT_PATH: &str = "/tmp";
@@ -19,6 +19,10 @@ fn is_supported_video_file(path: &Path) -> bool {
         .and_then(|ext| ext.to_str())
         .map(|ext| SUPPORTED_VIDEO_FILES.iter().any(|&supported| supported.eq_ignore_ascii_case(ext)))
         .unwrap_or(false)
+}
+
+fn is_supported_wifi_credentials_file(path: &Path) -> bool {
+    path.ends_with(WIFI_CFG_FILENAME)
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -47,6 +51,7 @@ impl FilesManager {
     const EVENTS_CAP: usize = 32;
     pub async fn new<S: FileSubscriber + 'static>(
         subscriber: Option<Arc<S>>,
+        wifi_manager_procedure: Option<WiFiCredentialsProcedure>,
     ) -> Result<Self, FilesManagerError> {
         let tmp_path = PathBuf::from(TMP_ROOT_PATH).join(TMP_DIR_NAME);
 
@@ -73,6 +78,7 @@ impl FilesManager {
                     Some(FilesSourceType::FlashDrive) => {
                         if let Err(e) = Self::process_files_from_flash_drive(
                             &subscriber,
+                            wifi_manager_procedure,
                             &tmp_path_shared, 
                             &media_user_path_shared
                         ).await {
@@ -144,15 +150,17 @@ impl FilesManager {
 
     async fn process_files_from_flash_drive<S: FileSubscriber>(
         subscriber: &Option<Arc<S>>,  
+        wifi_manager_procedure: Option<WiFiCredentialsProcedure>,
         tmp_path: &Path, 
         media_user_path: &Path
-    ) -> Result<(), tokio::io::Error> {
-        tracing::info!("Attempt to find files in FLASH drive and compy first to temporary dir.");
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        tracing::info!("Attempt to find files in FLASH drive");
 
         // Find FLASH drive directory inside media user directory
         if let Some(flash_drive_root) = Self::find_dir_entry_inside(media_user_path, Duration::from_millis(500)).await {
             tracing::debug!("Found FLASH drive root dir: {flash_drive_root:?}.");
             Self::find_any_video_file_notify_subscriber(subscriber, tmp_path, &flash_drive_root).await?;
+            Self::find_wifi_credentials_file(wifi_manager_procedure, &flash_drive_root).await?;
         }
 
         Ok(())
@@ -206,6 +214,20 @@ impl FilesManager {
         Ok(())
     }
 
+    async fn find_wifi_credentials_file(wifi_manager_procedure: Option<WiFiCredentialsProcedure>, flash_drive_root: &Path) -> Result<(), Box<dyn std::error::Error>> {
+        tracing::debug!("Attempt to find wifi credentials files.");
+
+        if let Some(wifi_credentials_file_path) = Self::find_supported_wifi_credentials_file(flash_drive_root, Duration::from_millis(2500)).await {
+            tracing::info!("Found wifi credentials file in FLASH drive {wifi_credentials_file_path:?}.");
+            let content = tokio::fs::read(&wifi_credentials_file_path).await?;
+            if let Some(wifi_manager_procedure) = wifi_manager_procedure {
+                wifi_manager_procedure(&content)?
+            }
+        }
+            
+        Ok(())
+    }
+
     async fn find_file_named(dir: &Path, file_name: &str, timeout_duration: Duration) -> Option<PathBuf> {
         Self::find_file_by(dir, |entry_path| {
             entry_path.file_name()
@@ -217,6 +239,10 @@ impl FilesManager {
 
     async fn find_supported_video_file(dir: &Path, timeout_duration: Duration) -> Option<PathBuf> {
         Self::find_file_by(dir, is_supported_video_file, timeout_duration).await
+    }    
+
+    async fn find_supported_wifi_credentials_file(dir: &Path, timeout_duration: Duration) -> Option<PathBuf> {
+        Self::find_file_by(dir, is_supported_wifi_credentials_file, timeout_duration).await
     }    
 
     async fn find_file_by<P: Fn(&Path) -> bool>(dir: &Path, predicate: P, timeout_duration: Duration) -> Option<PathBuf> {
@@ -338,6 +364,6 @@ mod tests {
     async fn test_file_manager_init() {
         init_test_tracing();
 
-        let _file_manager = FilesManager::new::<VideoPlayer>(None).await.unwrap();
+        let _file_manager = FilesManager::new::<VideoPlayer>(None, None).await.unwrap();
     }
 }
