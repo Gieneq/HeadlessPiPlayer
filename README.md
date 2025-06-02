@@ -1,5 +1,10 @@
 # HeadlessPiPlayer
+
 Headless video player for Raspberry Pi
+
+## How it works
+
+// todo
 
 ## Setup
 
@@ -13,152 +18,77 @@ Headless video player for Raspberry Pi
   - . "$HOME/.cargo/env"
   - rustc --version
 
-**Displaing setup**:
+**Startup**:
 
-HDMI monitor is probably display 0.
-(05.2025) RPi4's Rasperry PI OS has by default Waylane displaying technology replacing X. Seems it is not possible to output video started by service to HDMI display - VLC will output video to terminal.
+Add startup entry, probably `autostart` directory should be created:
 
-Replaing Waylane with X:
-
-Check available sessions, should be `LXDE-pi-x.desktop`:
-
-```sh
-ls /usr/share/xsessions/
+``` sh
+mkdir ~/.config/autostart/
+nano ~/.config/autostart/headlesspiplayer.desktop
 ```
 
-Edit LightDM config:
-```sh
-sudo nano /etc/lightdm/lightdm.conf
+Add content of `headlesspiplayer.desktop`, replace user, user home dir `~` not working here:
+
+```text                                                                                                         
+[Desktop Entry]
+Type=Application
+Exec=/home/<user>/headless_pi_player_entrance.sh
+Hidden=false
+NoDisplay=false
+X-GNOME-Autostart-enabled=true
+Name=HeadlessPiPlayerEntrance
+Comment=Entrypoint for Headless Pi Player
 ```
 
-Replace those lines:
-```text
-[Seat:*]
-autologin-user=<username>
-autologin-session=LXDE-pi-x
-user-session=LXDE-pi-x
+Add startup script:
+
+``` sh
+nano ~/headless_pi_player_entrance.sh
 ```
 
-Rmove stale session files:
-```sh
-sudo rm -rf /var/lib/lightdm/.Xauthority
-sudo rm -rf /home/borsuk/.Xauthority
-```
+Add content of`headless_pi_player_entrance.sh` script:
 
-Reboot:
-
-```sh
-sudo reboot now
-```
-
-**Every session setup**:
-
-Once per session use to be able to display program started in teminal to HDMI display:
-
-```sh
-export DISPLAY=:0
-export XDG_RUNTIME_DIR=/run/user/$(id -u)
-xhost +SI:localuser:$(whoami)
-```
-
+```sh                                                                                                             
+#!/bin/bash
+sleep 8
+whoami > ~/headless_pi_player_started.txt
+wlr-randr --output HDMI-A-1 --mode 480x272
+sleep 2
 Disable screen blanking:
-
-```sh
 xset s off          # Disable screen saver
 xset -dpms          # Disable DPMS (Energy Star) features
 xset s noblank      # Don't blank the video device
+~/HeadlessPiPlayer/target/release/headless_pi_player >> ~/headless_pi_player.log 2>&1   
 ```
 
-**WiFi set via CLI**:
+Some delay is required, file is touched for debug purpose.
+   
+Make script executable:
 
+``` sh
+chmod +x ~/headless_pi_player_entrance.sh
+```
+
+## Other
+
+WiFi set via CLI:
+
+```sh
 nmcli dev wifi connect "<ssid>" password "<psswd>"
+```
 
-**Startup service setup**:
-
-Copy binary and setup service file:
+Check if Headless Pi player is running:
 
 ```sh
-ls /usr/local/bin/
-sudo cp ./target/release/headless_pi_player /usr/local/bin/
-sudo chmod +x /usr/local/bin/headless_pi_player
-
-ls /etc/systemd/system/
-sudo nano /etc/systemd/system/headless_pi_player.service
-```
-Copy content of service file, replace user with custom user and check user id:
-
-> Check user id with `id -u <username>`
-
-```text
-[Unit]
-Description=Headless Pi Player
-After=network.target
-
-[Service]
-ExecStart=/usr/local/bin/headless_pi_player
-Restart=always
-User=borsuk
-Environment=DISPLAY=:0
-Environment=XDG_RUNTIME_DIR=/run/user/1000
-
-[Install]
-WantedBy=multi-user.target
+ps aux | grep headless_pi_player | grep -v grep
 ```
 
-Save with: ctrl-X -> Y -> Enter
-
-Enable service:
+Kill process, best kill `.sh` script to kill both in one go:
 
 ```sh
-sudo systemctl daemon-reexec
-sudo systemctl enable headless_pi_player.service
-```
-> There should be output like this:` Created symlink /etc/systemd/system/multi-user.target.wants/headless_pi_player.service → /etc/systemd/system/headless_pi_player.service`.
-
-Start service: 
-
-```sh
-sudo systemctl start headless_pi_player.service
+kill <pid>
 ```
 
-Check status and logs:
-
-```sh
-sudo systemctl status headless_pi_player.service
-journalctl -u headless_pi_player.service -e
-```
-
-Done! Upon next reboot service will start.
-
-**Utility commands**:
-
-Stop service until next reboot:
-
-```sh
-sudo systemctl disable headless_pi_player.service
-```
-
-Shutdown service permamently:
-
-```sh
-sudo systemctl stop headless_pi_player.service
-```
-
-Restart service:
-
-```sh
-sudo systemctl restart headless_pi_player.service
-```
-
-Update binary proceedure:
-
-```sh
-sudo systemctl stop headless_pi_player.service
-sudo cp ./target/release/headless_pi_player /usr/local/bin/
-sudo systemctl start headless_pi_player.service
-
-sudo systemctl status headless_pi_player.service
-```
 ## Testing
 
 Upload file cmd/curl:
