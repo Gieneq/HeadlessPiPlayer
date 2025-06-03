@@ -1,5 +1,7 @@
 use std::{path::Path, sync::Arc};
 
+use crate::wifi_manager::WifiManagerError;
+
 pub mod flash_drive_observer;
 pub mod file_manager;
 pub mod video_player;
@@ -47,4 +49,4 @@ pub trait FileSubscriber: Send + Sync {
     fn on_new_file_available(&self, file_path: &Path) -> impl std::future::Future<Output = Result<(), FileSubscriberError>> + Send;
 }
 
-pub type WiFiCredentialsProcedure = fn(&[u8]) -> Result<(), Box<dyn std::error::Error>>;
+pub type WiFiCredentialsProcedure = fn(&[u8]) -> Result<(), WifiManagerError>;
