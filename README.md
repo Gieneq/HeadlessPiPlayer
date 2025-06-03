@@ -1,6 +1,6 @@
 # HeadlessPiPlayer
 
-Headless video player for Raspberry Pi
+Headless video player for Raspberry Pi. Primary goal: video player for cosplay contraption.
 
 <p align="center"> <img width="500" alt="Video file playback" src="res/video_player.PNG"> </p>
 
@@ -93,6 +93,22 @@ Kill process, best kill `.sh` script to kill both in one go:
 ```sh
 kill <pid>
 ```
+
+## Update WiFi credentials
+
+Create file `wifi_config.json` on USB FLASH drive with content:
+```json
+{
+	"ssid": "your_ssid",
+	"psswd": "your_psswd"
+}
+```
+
+Insert USB FLASH drive into Raspberry Pi USB port.
+
+## Development
+
+To temporary stop running process kill it and then try `cargo run`. It can be good idea to have some release attached and startup script ready to be able to update WiFi credentials.
 
 ## Testing
 
