@@ -2,9 +2,14 @@
 
 Headless video player for Raspberry Pi
 
-## How it works
+<p align="center"> <img width="500" alt="Video file playback" src="res/video_player.PNG"> </p>
 
-// todo
+**Features**:
+- Loop playback video files
+- Upload via: USB FLASH drive & web server
+- WIFi credentials set via USB FLASH drive config file
+- Logging to internal memory and USB FLASH drive file
+- autostart headless mode
 
 ## Setup
 
@@ -61,7 +66,7 @@ xset s noblank      # Don't blank the video device
 ~/HeadlessPiPlayer/target/release/headless_pi_player >> ~/headless_pi_player.log 2>&1   
 ```
 
-Some delay is required, file is touched for debug purpose.
+Some delay is required, file is touched for debug purpose. You can download released version and pass custom path to executive.
    
 Make script executable:
 
@@ -96,3 +101,5 @@ Upload file cmd/curl:
 ```cmd
 curl -F "file=@<path_to_file>"  http://<pi_address>:8080/upload
 ```
+
+After uploading re-enter page to trigger `GET` methode.
