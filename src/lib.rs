@@ -49,4 +49,4 @@ pub trait FileSubscriber: Send + Sync {
     fn on_new_file_available(&self, file_path: &Path) -> impl std::future::Future<Output = Result<(), FileSubscriberError>> + Send;
 }
 
-pub type WiFiCredentialsProcedure = fn(&[u8]) -> Result<(), WifiManagerError>;
+pub type WiFiCredentialsProcedure = fn(&[u8]) -> Result<String, WifiManagerError>;

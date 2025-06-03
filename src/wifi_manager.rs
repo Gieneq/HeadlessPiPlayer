@@ -17,7 +17,7 @@ pub enum WifiManagerError {
     DeserializationError(#[from] serde_json::Error),
 }
 
-pub fn wifi_manager_procedure(config_file_content: &[u8]) -> Result<(), WifiManagerError> {
+pub fn wifi_manager_procedure(config_file_content: &[u8]) -> Result<String, WifiManagerError> {
     let config: WiFiCredentialsCfg = serde_json::from_slice(config_file_content)
         .inspect_err(|_| {
             let str_content = String::from_utf8_lossy(config_file_content);
@@ -37,7 +37,7 @@ pub fn wifi_manager_procedure(config_file_content: &[u8]) -> Result<(), WifiMana
 
     if output.status.success() {
         tracing::info!("wifi config = {config:?}, set.");
-        Ok(())
+        Ok(format!("Connected to '{}'.", config.ssid))
     } else {
         let stderr_str = String::from_utf8_lossy(&output.stderr);
         tracing::error!(

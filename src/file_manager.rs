@@ -18,6 +18,8 @@ const WIFI_CFG_FILENAME: &str = "wifi_config.json";
 
 const LOG_FILENAME: &str = "log.txt";
 
+type ResponseMsg = Vec<String>;
+
 fn is_supported_video_file(path: &Path) -> bool {
     path.extension()
         .and_then(|ext| ext.to_str())
@@ -83,31 +85,20 @@ impl FilesManager {
             loop {
                 let result = match files_source_rx.recv().await {
                     Some(FilesSourceType::FlashDrive) => {
-                        if let Err(e) = Self::process_files_from_flash_drive(
+                        Self::process_files_from_flash_drive(
                             &subscriber,
                             wifi_manager_procedure,
                             &tmp_path_shared, 
                             &media_user_path_shared
-                        ).await {
-                            tracing::error!("Failed to process files from flash drive, reason = '{e}'");
-                            Err(e)
-                        } else {
-                            Ok(())
-                        }
-
+                        ).await
                     },
                     Some(FilesSourceType::UploadedVideo { filename, data }) => {
-                        if let Err(e) = Self::process_files_from_webserver(
+                        Self::process_files_from_webserver(
                             &subscriber,
                             &tmp_path_shared,
                             &filename,
                             data
-                        ).await {
-                            tracing::error!("Failed to save uploaded video: {e}");
-                            Err(e)
-                        } else {
-                            Ok(())
-                        }
+                        ).await
                     },
                     None => {
                         tracing::info!("Shutting down event loop");
@@ -115,7 +106,13 @@ impl FilesManager {
                     },
                 };
 
-                if let Err(e) = result {       
+                // Log responses / errors
+                let log_lines = match result {
+                    Ok(result_lines) => result_lines,
+                    Err(e) => vec![e.to_string()],
+                };
+
+                if !log_lines.is_empty() {
                     if let Some(flash_drive_root) = Self::find_dir_entry_inside(&media_user_path_shared, Duration::from_millis(500)).await {
                         tracing::debug!("Found FLASH drive root dir: {flash_drive_root:?}.");
                         let log_filepath = flash_drive_root.join(LOG_FILENAME);
@@ -127,8 +124,8 @@ impl FilesManager {
                             .await 
                         {
                             let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
-                            let line = format!("[{timestamp}] {e}\n");
-                            if let Err(write_err) = file.write_all(line.as_bytes()).await {
+                            let log_content = format!("[{timestamp}] {log_lines:?}\n");
+                            if let Err(write_err) = file.write_all(log_content.as_bytes()).await {
                                 tracing::warn!("Failed to write to log file: {write_err}");
                             }
                         } else {
@@ -136,7 +133,6 @@ impl FilesManager {
                         }
                     }
                 }
-
             }
         });
 
@@ -152,7 +148,7 @@ impl FilesManager {
         tmp_path: &Path, 
         filename: &str,
         data: bytes::Bytes
-    ) -> Result<(), FilesManagerError> {
+    ) -> Result<ResponseMsg, FilesManagerError> {
         tracing::info!("Attempt to save data received by webserver.");
 
         tracing::info!("Attempt to notify subscriber: file deletion");
@@ -182,7 +178,7 @@ impl FilesManager {
             }
         }
 
-        Ok(())
+        Ok(vec![format!("Saved from webserver to {save_path:?}")])
     }
 
     async fn process_files_from_flash_drive<S: FileSubscriber>(
@@ -190,20 +186,24 @@ impl FilesManager {
         wifi_manager_procedure: Option<WiFiCredentialsProcedure>,
         tmp_path: &Path, 
         media_user_path: &Path
-    ) -> Result<(), FilesManagerError> {
+    ) -> Result<ResponseMsg, FilesManagerError> {
         tracing::info!("Attempt to find files in FLASH drive");
 
         // Find FLASH drive directory inside media user directory
-        if let Some(flash_drive_root) = Self::find_dir_entry_inside(media_user_path, Duration::from_millis(500)).await {
+        let result = if let Some(flash_drive_root) = Self::find_dir_entry_inside(media_user_path, Duration::from_millis(500)).await {
             tracing::debug!("Found FLASH drive root dir: {flash_drive_root:?}.");
-            Self::find_any_video_file_notify_subscriber(subscriber, tmp_path, &flash_drive_root).await?;
-            Self::find_wifi_credentials_file(wifi_manager_procedure, &flash_drive_root).await?;
-        }
+            let mut responses = Self::find_any_video_file_notify_subscriber(subscriber, tmp_path, &flash_drive_root).await?;
+            let responses_wifi_related = Self::find_wifi_credentials_file_and_them(wifi_manager_procedure, &flash_drive_root).await?;
+            responses.extend(responses_wifi_related);
+            responses
+        } else {
+            vec![]
+        };
 
-        Ok(())
+        Ok(result)
     }
 
-    async fn find_any_video_file_notify_subscriber<S: FileSubscriber>(subscriber: &Option<Arc<S>>, tmp_path: &Path, flash_drive_root: &Path) -> Result<(), std::io::Error> {
+    async fn find_any_video_file_notify_subscriber<S: FileSubscriber>(subscriber: &Option<Arc<S>>, tmp_path: &Path, flash_drive_root: &Path) -> Result<ResponseMsg, std::io::Error> {
         tracing::debug!("Attempt to find video files.");
 
         if let Some(video_file_path) = Self::find_supported_video_file(flash_drive_root, Duration::from_millis(2500)).await {
@@ -245,24 +245,26 @@ impl FilesManager {
                     tracing::warn!("'on_new_file_available' failed reason {e}");
                 }
             }
+            Ok(vec![format!("Copied file {video_file_path:?} to {video_file_destination_path:?}.")])
         } else {
             tracing::info!("Not found any files :(");
+            Ok(vec![format!("No video files on flash drive")])
         }
-        Ok(())
     }
 
-    async fn find_wifi_credentials_file(wifi_manager_procedure: Option<WiFiCredentialsProcedure>, flash_drive_root: &Path) -> Result<(), FilesManagerError> {
+    async fn find_wifi_credentials_file_and_them(wifi_manager_procedure: Option<WiFiCredentialsProcedure>, flash_drive_root: &Path) -> Result<ResponseMsg, FilesManagerError> {
         tracing::debug!("Attempt to find wifi credentials files.");
 
         if let Some(wifi_credentials_file_path) = Self::find_supported_wifi_credentials_file(flash_drive_root, Duration::from_millis(2500)).await {
             tracing::info!("Found wifi credentials file in FLASH drive {wifi_credentials_file_path:?}.");
             let content = tokio::fs::read(&wifi_credentials_file_path).await?;
             if let Some(wifi_manager_procedure) = wifi_manager_procedure {
-                wifi_manager_procedure(&content)?
+                let response = wifi_manager_procedure(&content)?;
+                return Ok(vec![response]);
             }
         }
             
-        Ok(())
+        Ok(vec![])
     }
 
     async fn find_file_named(dir: &Path, file_name: &str, timeout_duration: Duration) -> Option<PathBuf> {
