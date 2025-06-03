@@ -259,7 +259,10 @@ impl FilesManager {
             tracing::info!("Found wifi credentials file in FLASH drive {wifi_credentials_file_path:?}.");
             let content = tokio::fs::read(&wifi_credentials_file_path).await?;
             if let Some(wifi_manager_procedure) = wifi_manager_procedure {
-                let response = wifi_manager_procedure(&content)?;
+                let response = tokio::task::spawn_blocking(move || {
+                    wifi_manager_procedure(&content)
+                }).await.expect("WiFi Manager procedure locking task failed")?;
+
                 return Ok(vec![response]);
             }
         }
