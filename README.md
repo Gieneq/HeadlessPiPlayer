@@ -11,6 +11,11 @@ Headless video player for Raspberry Pi
 - Logging to internal memory and USB FLASH drive file
 - autostart headless mode
 
+**Web access**:
+1. Find IP address: check display or log.txt file on USB FLASH drive
+2. Enter http://<ip>/upload
+3. After uploading file you will get `upload` response. Re-enter (not refresh) the page to upload next file.
+
 ## Setup
 
 **Required dependencies**:
@@ -66,7 +71,7 @@ xset s noblank      # Don't blank the video device
 ~/HeadlessPiPlayer/target/release/headless_pi_player >> ~/headless_pi_player.log 2>&1   
 ```
 
-Some delay is required, file is touched for debug purpose. You can download released version and pass custom path to executive.
+Some delay is required, file is touched for debug purpose. You can download [released](https://github.com/Gieneq/HeadlessPiPlayer/releases) version and pass custom path to executive.
    
 Make script executable:
 
