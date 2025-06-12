@@ -2,7 +2,7 @@
 
 Headless video player for Raspberry Pi. Primary goal: video player for cosplay contraption.
 
-<p align="center"> <img width="500" alt="Video file playback" src="res/video_player.PNG"> </p>
+<p align="center"> <img width="500" alt="Video file playback" src="res/headless_pi_player_example.gif"> </p>
 
 **Features**:
 - Loop playback video files
@@ -10,6 +10,8 @@ Headless video player for Raspberry Pi. Primary goal: video player for cosplay c
 - WIFi credentials set via USB FLASH drive config file
 - Logging to internal memory and USB FLASH drive file
 - autostart headless mode
+
+<p align="center"> <img width="500" alt="Video file playback" src="res/video_player.PNG"> </p>
 
 ## Setup
 
